@@ -1,0 +1,8 @@
+streamlit
+openai
+streamlit-mic-recorder
+opencv-python-headless
+numpy
+requests
+Pillow
+watchdog
