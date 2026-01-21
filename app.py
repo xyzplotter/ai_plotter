@@ -1,34 +1,36 @@
 import streamlit as st
 import openai
-from io import BytesIO
 import requests
-from PIL import Image, ImageOps
-from streamlit_mic_recorder import mic_recorder
 import cv2
 import numpy as np
+from PIL import Image
+# 브라우저 내장 음성 인식 (무료, 자동/수동 종료)
+from streamlit_mic_recorder import speech_to_text
 
 # ==========================================
-# 🔐 API 키 설정 (OpenAI 하나로 통일!)
+# 🔐 1. API 키 설정
 # ==========================================
 try:
-    # secrets.toml에 있는 OPENAI_API_KEY 사용
     openai.api_key = st.secrets["OPENAI_API_KEY"]
     client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 except Exception as e:
-    st.error(f"OpenAI API 키 오류! secrets.toml을 확인해주세요.\n에러: {e}")
+    st.error(f"🚨 OpenAI API 키 오류! Streamlit 설정(Secrets)을 확인해주세요.\n에러 내용: {e}")
     st.stop()
 
 # ==========================================
-# 🧠 [통역사] GPT-4o-mini (번역 담당)
+# 🧠 2. 프롬프트 엔지니어링 (GPT-4o-mini)
 # ==========================================
 def translate_to_english_gpt(text):
     try:
-        # [핵심 수정] 한국어는 번역하고, 영어는 다듬어주는 똑똑한 프롬프트 적용!
-        system_prompt = """You are an expert prompt engineer for DALL-E. 
-        Your task is to convert user input into a descriptive English prompt for image generation.
-        1. If the input is in Korean, translate it accurately into English.
-        2. If the input is already in English, refine it to be more descriptive for DALL-E.
-        Output ONLY the final English prompt string."""
+        # [핵심 변경] GPT에게 "플로터용 도안"을 만들라고 강력하게 지시
+        system_prompt = """You are an expert prompt engineer for a pen plotter art bot.
+        Your goal is to convert user input into a specific prompt for DALL-E to generate 'Line Art'.
+        
+        Strictly follow these rules to avoid 'hatching' (shading):
+        1. Style: "Minimalist continuous line art", "Black ink on white background", "No shading", "No fill", "High contrast".
+        2. Detail: "Vector style illustration", "Clean lines", "Simple shapes", "Coloring book style".
+        3. Subject: Focus on the main object clearly.
+        4. Output: ONLY output the final English prompt string."""
         
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -42,33 +44,13 @@ def translate_to_english_gpt(text):
         return f"Error: {e}"
 
 # ==========================================
-# 🎤 [귀] Whisper-1 (음성 인식 담당)
-# ==========================================
-def transcribe_audio_whisper(audio_bytes):
-    try:
-        audio_file = BytesIO(audio_bytes)
-        audio_file.name = "voice.wav"
-        
-        # [유지] 한국어 인식률 최우선을 위해 language="ko" 고정
-        # 영어를 말해도 Whisper가 알아서 한국어로 음차( transliteration)하거나
-        # 쉬운 단어는 영어로 적어주는데, 이걸 위에서 GPT가 알아서 처리함.
-        transcript = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=audio_file,
-            language="ko"
-        )
-        return transcript.text.strip()
-    except Exception as e:
-        st.error(f"음성 인식 실패: {e}")
-        return ""
-
-# ==========================================
-# 📸 [손] DALL-E 2 (그림 담당)
+# 📸 3. 이미지 생성 (DALL-E 2)
 # ==========================================
 def generate_dalle_image(english_prompt):
     try:
-        # 실사 느낌을 강조하는 프롬프트 추가
-        full_prompt = f"{english_prompt}, photorealistic photograph, detailed, sharp focus, white background."
+        # [핵심 변경] 프롬프트 뒤에 '단순화' 주문을 덕지덕지 붙임
+        full_prompt = f"{english_prompt}, minimalist vector line art, black and white, simple outlines, white background, no shading, high contrast."
+        
         response = client.images.generate(
             model="dall-e-2",
             prompt=full_prompt,
@@ -81,108 +63,104 @@ def generate_dalle_image(english_prompt):
         return None
 
 # ==========================================
-# 🎨 [변환기] 이미지 -> 스케치 (OpenCV)
+# 🎨 4. 스케치 변환 (OpenCV)
 # ==========================================
 def convert_to_sketch(image_bytes):
-    # 1. 이미지 로드
+    # 이미지를 흑백으로 읽기
     file_bytes = np.asarray(bytearray(image_bytes), dtype=np.uint8)
     image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     
-    # 2. 흑백 변환 및 블러 (노이즈 제거)
+    # 1. 흑백 변환
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # 2. 노이즈 제거 (블러링을 약간 세게 줌)
     blurred_image = cv2.GaussianBlur(gray_image, (5, 5), 0)
     
-    # 3. Canny Edge Detection (외곽선 검출)
-    # threshold1, 2 값을 조절하면 선의 디테일이 달라집니다. (현재 50, 150)
-    edges = cv2.Canny(blurred_image, 50, 150)
+    # 3. 이진화 (검은색/흰색만 남기기) - 흐릿한 회색 선을 날려버림
+    _, binary_image = cv2.threshold(blurred_image, 200, 255, cv2.THRESH_BINARY)
     
-    # 4. 색상 반전 (검은 배경 흰 선 -> 흰 배경 검은 선 - 플로터용)
+    # 4. 외곽선 추출 (Canny)
+    edges = cv2.Canny(binary_image, 50, 150)
+    
+    # 5. 색상 반전 (흰 배경에 검은 선)
     inverted_edges = cv2.bitwise_not(edges)
     
-    # 5. 결과 반환
+    # 인코딩 후 반환
     is_success, buffer = cv2.imencode(".png", inverted_edges)
     return buffer.tobytes()
 
 # ==========================================
-# 🖥️ 메인 UI
+# 🖥️ 5. 메인 UI
 # ==========================================
-st.set_page_config(page_title="AI Plotter Controller", page_icon="🤖")
-st.title("🤖 AI 플로터 컨트롤러 (통합 버전)")
-st.caption("OpenAI(음성/번역/그림) + OpenCV(스케치 변환) 엔진 탑재")
+st.set_page_config(page_title="AI Plotter - Line Art Edition", page_icon="✒️")
+st.title("✒️ AI 플로터 (라인 아트 전용)")
+st.caption("🗣️ 말하면 -> 🎨 깔끔한 선화(Line Art)로 그려줍니다.")
 
 st.divider()
-
-# --- 1. 음성 입력 ---
-c1, c2 = st.columns([1, 4])
-with c1:
-    st.write("🎤 음성 명령:")
-with c2:
-    audio = mic_recorder(start_prompt="🔴 녹음 시작", stop_prompt="⏹ 녹음 종료", just_once=True, key='rec')
 
 if 'voice_msg' not in st.session_state:
     st.session_state.voice_msg = ""
 
-if audio:
-    with st.spinner("Whisper가 듣는 중..."):
-        st.session_state.voice_msg = transcribe_audio_whisper(audio['bytes'])
+# --- 1. 음성 입력 ---
+c1, c2 = st.columns([1, 4])
+with c1:
+    st.write("🎤 명령하기:")
+with c2:
+    text = speech_to_text(
+        language='ko',
+        start_prompt="🔴 말하기 (Click)",
+        stop_prompt="👂 듣고 있어요... (Click to Stop)", 
+        just_once=True,
+        key='STT'
+    )
 
-user_prompt = st.text_input("주제 입력 (한글/영어):", value=st.session_state.voice_msg)
+if text:
+    st.session_state.voice_msg = text
+    st.toast("✅ 인식 완료!", icon="🗣️")
+
+user_prompt = st.text_input("주제 입력:", value=st.session_state.voice_msg)
 
 st.divider()
 
-# --- 2. 이미지 생성 버튼 ---
-if st.button("📸 실사 이미지 생성하기 (DALL-E 2)", type="primary", use_container_width=True):
+# --- 2. 생성 및 변환 ---
+if st.button("🎨 도안 생성하기 (DALL-E 2)", type="primary", use_container_width=True):
     if not user_prompt:
         st.warning("주제를 입력해주세요!")
     else:
-        # 1단계: 번역 (GPT-4o-mini)
-        with st.spinner("GPT가 DALL-E를 위한 프롬프트를 작성 중..."):
+        # 1. 번역 및 프롬프트 최적화
+        with st.spinner("GPT가 플로터용 명령어로 변환 중..."):
             english_prompt = translate_to_english_gpt(user_prompt)
         
         if english_prompt.startswith("Error"):
-            st.error(f"🛑 프롬프트 작성 실패: {english_prompt}")
+            st.error(f"에러: {english_prompt}")
         else:
-            st.info(f"🔤 DALL-E 프롬프트: **[{english_prompt}]**")
+            st.info(f"🔤 변환된 명령: {english_prompt}")
 
-            # 2단계: 그림 (DALL-E 2)
-            with st.spinner(f"DALL-E 2가 그리는 중... (약 20원)"):
+            # 2. 그림 생성
+            with st.spinner("DALL-E가 선화(Line Art)를 그리는 중..."):
                 img_url = generate_dalle_image(english_prompt)
                 
                 if img_url:
                     img_data = requests.get(img_url).content
                     st.session_state.generated_image = img_data
-                    # 새 그림 생성 시 기존 변환 결과 초기화
-                    if 'processed_image' in st.session_state:
-                        del st.session_state.processed_image
-                    st.success("생성 완료!")
+                    
+                    # 3. 바로 스케치 변환까지 실행 (원스톱)
+                    processed_data = convert_to_sketch(img_data)
+                    st.session_state.processed_image = processed_data
+                    st.success("생성 및 변환 완료!")
 
-# --- 3. 결과 확인 및 변환 ---
-if 'generated_image' in st.session_state:
-    st.image(st.session_state.generated_image, caption="원본 실사 이미지", use_container_width=True)
-    
-    st.divider()
-    st.subheader("🎨 플로터용 변환 스타일 선택")
-    
-    b1, b2, b3 = st.columns(3)
-    
-    with b1:
-        if st.button("📐 지오메트릭", use_container_width=True):
-            st.info("🚧 다음 업데이트 예정 (Next Step!)")
-            
-    with b2:
-        if st.button("〰️ 원라인", use_container_width=True):
-             st.info("🚧 다음 업데이트 예정 (Next Step!)")
-            
-    with b3:
-        # OpenCV 스케치 버튼
-        if st.button("🖊️ 스케치 (Edge)", type="secondary", use_container_width=True):
-            with st.spinner("OpenCV가 외곽선을 추출하는 중..."):
-                processed_data = convert_to_sketch(st.session_state.generated_image)
-                st.session_state.processed_image = processed_data
-                st.toast("✅ 스케치 변환 완료!")
-
-    # 변환된 이미지가 있으면 표시
-    if 'processed_image' in st.session_state:
-        st.divider()
-        st.subheader("🖨️ 플로터 출력 결과물 (Preview)")
-        st.image(st.session_state.processed_image, caption="최종 변환 결과 (Canny Edge)", use_container_width=True)
+# --- 3. 결과 확인 ---
+if 'generated_image' in st.session_state and 'processed_image' in st.session_state:
+    col1, col2 = st.columns(2)
+    with col1:
+        st.image(st.session_state.generated_image, caption="1차 결과 (DALL-E Line Art)", use_container_width=True)
+    with col2:
+        st.image(st.session_state.processed_image, caption="최종 변환 (Plotter Ready)", use_container_width=True)
+        
+    st.download_button(
+        label="📥 최종 이미지 다운로드",
+        data=st.session_state.processed_image,
+        file_name="plotter_sketch.png",
+        mime="image/png",
+        use_container_width=True
+    )
