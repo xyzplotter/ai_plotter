@@ -1,8 +1,7 @@
 streamlit
 openai
-streamlit-mic-recorder
-opencv-python-headless
 numpy
+svgpathtools
+opencv-python-headless
+streamlit-mic-recorder
 requests
-Pillow
-watchdog
