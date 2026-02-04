@@ -3,7 +3,9 @@ import openai
 import requests
 from streamlit_mic_recorder import speech_to_text
 
-# 모듈 불러오기
+# ==========================================
+# 👇 여기가 문제였던 부분! (이름 통일 완료)
+# ==========================================
 from modules.ai_generator import translate_prompt, generate_image
 from modules.image_proc import process_image_to_sketch
 from modules.gcode_utils import image_to_gcode
@@ -22,11 +24,11 @@ except Exception as e:
 # 🖥️ 화면 구성
 # ==========================================
 st.set_page_config(page_title="AI Plotter Final", page_icon="✒️")
-st.title("✒️ AI 플로터 (최종 디버깅 모드)")
+st.title("✒️ AI 플로터")
 
 # 스타일 선택
 style_option = st.radio(
-    "스타일:", 
+    "드로잉 스타일:", 
     ('1. 〰️ 원라인', '2. 🖍️ 캐릭터 (스텐실)', '3. 📐 V3 지오메트릭'), 
     horizontal=True
 )
@@ -36,7 +38,9 @@ style_modifier = ""
 if '원라인' in style_option:
     style_modifier = ", continuous single line drawing, minimalist, fluid line art, flat pure white background, no shading, vector style."
 elif '캐릭터' in style_option:
-    style_modifier = ", simple vector line art. Stencil style outline. Minimalist coloring book page. Thick monoline black outlines. White fill. No internal detail lines, no shading. Isolated on white background."
+    # [수정] 최강 심플: '컬러링북' 삭제 -> '라인 아트 아이콘'으로 변경
+    # monoline: 선 굵기 일정함 / vector: 선이 매끈함 / icon: 형태가 단순함
+    style_modifier = ", minimalist line art icon. vector style. smooth curves. monoline. black and white. no shading. high contrast. white background."
 elif '지오메트릭' in style_option:
     style_modifier = ", minimalist geometric low poly vector art. Constructed with large, sparse triangles. Single straight black lines. No shading. Isolated on white background."
 
@@ -44,22 +48,27 @@ elif '지오메트릭' in style_option:
 c1, c2 = st.columns([1, 4])
 with c1: st.write("🎤 음성:")
 with c2: 
+    # 음성 인식
     voice = speech_to_text(language='ko', start_prompt="🔴 말하기", stop_prompt="⏹️ 끝", key='STT')
 
 if 'voice_msg' not in st.session_state:
     st.session_state.voice_msg = ""
+
+# 음성 데이터 처리 (딕셔너리 or 문자열)
 if voice:
-    st.session_state.voice_msg = voice
+    if isinstance(voice, dict):
+        st.session_state.voice_msg = voice.get("text", "")
+    else:
+        st.session_state.voice_msg = str(voice)
 
 user_prompt = st.text_input("그릴 내용:", value=st.session_state.voice_msg)
 
 st.divider()
 
 # ==========================================
-# 🚀 실행 로직 (디버깅 메시지 포함)
+# 🚀 실행 로직
 # ==========================================
 if st.button("🎨 생성 시작", type="primary", use_container_width=True):
-    # 1. 버튼 클릭 확인
     st.write("✅ 버튼이 클릭되었습니다. 처리를 시작합니다...")
     
     if not user_prompt:
@@ -76,6 +85,7 @@ if st.button("🎨 생성 시작", type="primary", use_container_width=True):
             
             # [단계 2] 그림 생성
             with st.spinner("2단계: 그림 그리는 중 (최대 10초)..."):
+                # 👇 여기서 함수 이름을 generate_image로 정확히 씀
                 img_url = generate_image(client, eng_prompt, style_modifier)
             
             if img_url:
