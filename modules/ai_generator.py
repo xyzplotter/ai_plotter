@@ -3,6 +3,7 @@ import openai
 def translate_prompt(client, text):
     """
     한글 -> 영어 프롬프트 번역
+    (GPT-4o-mini 사용)
     """
     try:
         system_prompt = """You are a translator. 
@@ -25,6 +26,7 @@ def generate_image(client, english_prompt, style_modifier):
     DALL-E 2 이미지 생성
     """
     try:
+        # 프롬프트와 스타일 합치기
         full_prompt = f"{english_prompt}{style_modifier}"
         print(f"📌 [Debug] DALL-E 요청 프롬프트: {full_prompt}") 
 
