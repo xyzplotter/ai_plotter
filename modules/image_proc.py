@@ -34,21 +34,19 @@ def process_image_to_sketch(image_bytes):
         if cv2.countNonZero(binary) == 0:
             break
             
-    # 6. [NEW] 안전 여백(Padding) 추가 🛡️
-    # 상하좌우에 50픽셀씩 흰색(0이 아니라 255여야 하는데 반전 전이라 0) 테두리를 추가
-    # 나중에 반전되면 흰색 여백이 됨
+    # 6. 안전 여백(Padding) 추가
     padding_size = 50
     skeleton_with_border = cv2.copyMakeBorder(
         skeleton, 
-        padding_size, padding_size, padding_size, padding_size, # 상, 하, 좌, 우
+        padding_size, padding_size, padding_size, padding_size, 
         cv2.BORDER_CONSTANT, 
-        value=0 # 검은색(나중에 흰색 됨)으로 채움
+        value=0
     )
 
     # 7. 색상 반전 (흰 배경, 검은 선)
     result = cv2.bitwise_not(skeleton_with_border)
     
-    # 8. BMP 저장
+    # 8. BMP 반환
     is_success, buffer = cv2.imencode(".bmp", result)
     
     if not is_success: return None
