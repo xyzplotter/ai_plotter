@@ -15,7 +15,7 @@ from gcode_utils import image_to_gcode
 # ==========================================
 # ⚙️ 아두이노 포트 설정 (라즈베리 파이 연결용)
 # ==========================================
-SERIAL_PORT = '/dev/ttyACM0'  # 아까 확인한 포트 (안 되면 /dev/ttyUSB0 시도)
+SERIAL_PORT = 'COM6'  # 아까 확인한 포트 (안 되면 /dev/ttyUSB0 시도)
 BAUD_RATE = 115200
 
 # ==========================================
@@ -177,3 +177,4 @@ if 'generated_image' in st.session_state and 'processed_image' in st.session_sta
         
         # 다운로드 버튼도 살려둠 (백업용)
         st.download_button("💾 G-code 파일만 다운로드", st.session_state.gcode_result, "plot.gcode")
+
