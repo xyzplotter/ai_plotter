@@ -1,129 +1,85 @@
 import streamlit as st
-import openai
-import requests
-from streamlit_mic_recorder import speech_to_text
+import gcode_utils  # 우리가 만든 변환기
+import serial
+import time
+import os
 
 # ==========================================
-# 👇 여기가 문제였던 부분! (이름 통일 완료)
+# ⚙️ 설정 (아두이노 포트 확인 필수!)
 # ==========================================
-from modules.ai_generator import translate_prompt, generate_image
-from modules.image_proc import process_image_to_sketch
-from modules.gcode_utils import image_to_gcode
-
-# ==========================================
-# 🔐 API 키 설정
-# ==========================================
-try:
-    openai.api_key = st.secrets["OPENAI_API_KEY"]
-    client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-except Exception as e:
-    st.error(f"🚨 API Key 오류! .streamlit/secrets.toml 파일을 확인하세요.\n내용: {e}")
-    st.stop()
+SERIAL_PORT = '/dev/ttyACM0'  # 아까 확인한 포트
+BAUD_RATE = 115200
 
 # ==========================================
-# 🖥️ 화면 구성
+# 🔌 아두이노 전송 함수 (Sender 기능 통합)
 # ==========================================
-st.set_page_config(page_title="AI Plotter Final", page_icon="✒️")
-st.title("✒️ AI 플로터")
+def send_to_arduino(gcode_text):
+    try:
+        # 1. 아두이노 연결
+        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+        time.sleep(2) # 연결 대기 (중요!)
 
-# 스타일 선택
-style_option = st.radio(
-    "드로잉 스타일:", 
-    ('1. 〰️ 원라인', '2. 🖍️ 캐릭터 (스텐실)', '3. 📐 V3 지오메트릭'), 
-    horizontal=True
-)
-
-# 프롬프트 설정
-style_modifier = ""
-if '원라인' in style_option:
-    style_modifier = ", continuous single line drawing, minimalist, fluid line art, flat pure white background, no shading, vector style."
-elif '캐릭터' in style_option:
-    # [수정] 최강 심플: '컬러링북' 삭제 -> '라인 아트 아이콘'으로 변경
-    # monoline: 선 굵기 일정함 / vector: 선이 매끈함 / icon: 형태가 단순함
-    style_modifier = ", minimalist line art icon. vector style. smooth curves. monoline. black and white. no shading. high contrast. white background."
-elif '지오메트릭' in style_option:
-    style_modifier = ", minimalist geometric low poly vector art. Constructed with large, sparse triangles. Single straight black lines. No shading. Isolated on white background."
-
-# 입력 받기
-c1, c2 = st.columns([1, 4])
-with c1: st.write("🎤 음성:")
-with c2: 
-    # 음성 인식
-    voice = speech_to_text(language='ko', start_prompt="🔴 말하기", stop_prompt="⏹️ 끝", key='STT')
-
-if 'voice_msg' not in st.session_state:
-    st.session_state.voice_msg = ""
-
-# 음성 데이터 처리 (딕셔너리 or 문자열)
-if voice:
-    if isinstance(voice, dict):
-        st.session_state.voice_msg = voice.get("text", "")
-    else:
-        st.session_state.voice_msg = str(voice)
-
-user_prompt = st.text_input("그릴 내용:", value=st.session_state.voice_msg)
-
-st.divider()
-
-# ==========================================
-# 🚀 실행 로직
-# ==========================================
-if st.button("🎨 생성 시작", type="primary", use_container_width=True):
-    st.write("✅ 버튼이 클릭되었습니다. 처리를 시작합니다...")
-    
-    if not user_prompt:
-        st.warning("⚠️ 내용을 입력해주세요!")
-    else:
-        # [단계 1] 번역
-        with st.spinner("1단계: 번역 중..."):
-            eng_prompt = translate_prompt(client, user_prompt)
+        lines = gcode_text.strip().split('\n')
+        total_lines = len(lines)
         
-        if "Error" in eng_prompt:
-            st.error(f"🚨 번역 에러: {eng_prompt}")
-        else:
-            st.info(f"🔤 번역 결과: {eng_prompt}")
+        # 화면에 진행바 띄우기
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        for i, line in enumerate(lines):
+            if not line.strip(): continue
+
+            # 명령 전송
+            ser.write((line + '\n').encode())
+
+            # 아두이노가 'ok' 할 때까지 대기 (흐름 제어)
+            while True:
+                response = ser.readline().decode().strip()
+                if 'ok' in response:
+                    break
             
-            # [단계 2] 그림 생성
-            with st.spinner("2단계: 그림 그리는 중 (최대 10초)..."):
-                # 👇 여기서 함수 이름을 generate_image로 정확히 씀
-                img_url = generate_image(client, eng_prompt, style_modifier)
-            
-            if img_url:
-                # 이미지 다운로드
-                st.write("📸 이미지 다운로드 중...")
-                img_data = requests.get(img_url).content
-                st.session_state.generated_image = img_data
-                
-                # [단계 3] 전처리
-                st.write("⚙️ 전처리(이진화) 중...")
-                processed_data = process_image_to_sketch(img_data)
-                
-                if processed_data:
-                    st.session_state.processed_image = processed_data
-                    st.success("✅ 모든 처리 완료!")
-                else:
-                    st.error("🚨 전처리 과정에서 실패했습니다.")
-            else:
-                st.error("🚨 DALL-E가 이미지를 생성하지 못했습니다. (터미널 확인 요망)")
+            # 진행률 업데이트
+            current_progress = (i + 1) / total_lines
+            progress_bar.progress(current_progress)
+            status_text.text(f"🖨️ 출력 중... ({int(current_progress * 100)}%)")
+
+        ser.close()
+        return True, "출력 완료!"
+
+    except Exception as e:
+        return False, f"에러 발생: {str(e)}"
 
 # ==========================================
-# 🖼️ 결과 확인
+# 🖥️ 웹 화면 구성
 # ==========================================
-if 'generated_image' in st.session_state and 'processed_image' in st.session_state:
-    col1, col2 = st.columns(2)
-    with col1:
-        st.image(st.session_state.generated_image, caption="AI 원본")
-    with col2:
-        st.image(st.session_state.processed_image, caption="플로터용 전처리")
-        
-    st.divider()
-    
-    if st.button("⚙️ G-code 변환 (Potrace)"):
-        gcode_result = image_to_gcode(st.session_state.processed_image)
-        
+st.title("🐰 라즈베리 파이 드로잉 봇")
+
+uploaded_file = st.file_uploader("이미지를 올려주세요", type=["png", "jpg", "jpeg"])
+
+if uploaded_file is not None:
+    # 1. 이미지 표시
+    st.image(uploaded_file, caption='업로드된 이미지', width=300)
+
+    # 2. 변환 및 출력 버튼
+    if st.button("🚀 변환하고 바로 그리기!"):
+        with st.spinner('G-code 만드는 중...'):
+            # 이미지 데이터 읽기
+            image_bytes = uploaded_file.getvalue()
+            
+            # gcode_utils 변환 함수 호출
+            gcode_result = gcode_utils.image_to_gcode(image_bytes)
+
         if "Error" in gcode_result:
             st.error(gcode_result)
         else:
-            st.success("G-code 생성 성공!")
-            st.text_area("G-code 결과", gcode_result[:500] + "\n...", height=150)
-            st.download_button("G-code 다운로드", gcode_result, "plot.gcode")
+            st.success(f"✅ G-code 생성 완료! (길이: {len(gcode_result)} 글자)")
+            
+            # 바로 전송 시작
+            with st.spinner('아두이노로 전송 중... (기계가 움직입니다!)'):
+                success, msg = send_to_arduino(gcode_result)
+                
+            if success:
+                st.balloons()
+                st.success(msg)
+            else:
+                st.error(msg)
